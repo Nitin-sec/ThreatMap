@@ -1,6 +1,6 @@
 """
-main.py — ThreatMap Infra entry point
-Metasploit-style terminal UX. Clean, no duplicate banner, no HF noise.
+main.py — ThreatMap Infra v1.0
+Metasploit-style UX. Asks user where to save report. All data local.
 """
 
 import logging
@@ -14,7 +14,7 @@ import warnings
 from pathlib import Path
 from datetime import datetime
 
-# ── Suppress third-party noise before any imports ───────────────────────────
+# Suppress third-party noise early
 warnings.filterwarnings("ignore")
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -23,10 +23,8 @@ logging.getLogger("urllib3").setLevel(logging.ERROR)
 
 import questionary
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 from rich.rule import Rule
-from rich.text import Text
 from rich.progress import (
     Progress, SpinnerColumn, BarColumn,
     TextColumn, TimeElapsedColumn, TaskProgressColumn,
@@ -62,8 +60,18 @@ SEV_SLA = {
 }
 SEV_ORDER = ["Critical", "High", "Medium", "Low", "Info"]
 
+Q = questionary.Style([
+    ("qmark",       "fg:red bold"),
+    ("question",    "fg:white bold"),
+    ("answer",      "fg:cyan bold"),
+    ("pointer",     "fg:red bold"),
+    ("highlighted", "fg:cyan bold"),
+    ("selected",    "fg:cyan"),
+    ("instruction", "fg:gray"),
+])
 
-# ── Logging ──────────────────────────────────────────────────────────────────
+
+# ── Logging ───────────────────────────────────────────────────────────────────
 
 def _configure_logging(log_path: str) -> None:
     root = logging.getLogger("threatmap")
@@ -79,9 +87,10 @@ def _configure_logging(log_path: str) -> None:
     root.propagate = False
 
 
-# ── Environment ───────────────────────────────────────────────────────────────
+# ── Env ───────────────────────────────────────────────────────────────────────
 
 def ensure_env() -> None:
+    """Create a fresh reports/ working dir each run."""
     if os.path.exists("reports"):
         shutil.rmtree("reports")
     os.makedirs("reports")
@@ -100,20 +109,7 @@ def open_file(path: str) -> None:
         pass
 
 
-# ── Questionary style ────────────────────────────────────────────────────────
-
-Q = questionary.Style([
-    ("qmark",       "fg:red bold"),
-    ("question",    "fg:white bold"),
-    ("answer",      "fg:cyan bold"),
-    ("pointer",     "fg:red bold"),
-    ("highlighted", "fg:cyan bold"),
-    ("selected",    "fg:cyan"),
-    ("instruction", "fg:gray"),
-])
-
-
-# ── Status line printers (Metasploit style) ───────────────────────────────────
+# ── Status printers (Metasploit style) ───────────────────────────────────────
 
 def _i(msg):  console.print(f"  [bold blue][[*]][/bold blue]  {msg}")
 def _ok(msg): console.print(f"  [bold green][[+]][/bold green]  {msg}")
@@ -121,19 +117,18 @@ def _w(msg):  console.print(f"  [bold yellow][[!]][/bold yellow]  {msg}")
 def _e(msg):  console.print(f"  [bold red][[-]][/bold red]  {msg}")
 
 
-# ── Banner — printed ONCE ─────────────────────────────────────────────────────
+# ── Banner ────────────────────────────────────────────────────────────────────
 
 def _banner() -> None:
     console.print()
-    art_lines = [
+    for line in [
         "  ████████╗██╗  ██╗██████╗ ███████╗ █████╗ ████████╗███╗   ███╗ █████╗ ██████╗  ",
         "     ██╔══╝██║  ██║██╔══██╗██╔════╝██╔══██╗╚══██╔══╝████╗ ████║██╔══██╗██╔══██╗ ",
         "     ██║   ███████║██████╔╝█████╗  ███████║   ██║   ██╔████╔██║███████║██████╔╝  ",
         "     ██║   ██╔══██║██╔══██╗██╔══╝  ██╔══██║   ██║   ██║╚██╔╝██║██╔══██║██╔═══╝   ",
         "     ██║   ██║  ██║██║  ██║███████╗██║  ██║   ██║   ██║ ╚═╝ ██║██║  ██║██║        ",
         "     ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝   ╚═╝   ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝       ",
-    ]
-    for line in art_lines:
+    ]:
         console.print(f"[bold red]{line}[/bold red]")
     console.print()
 
@@ -142,6 +137,7 @@ def _banner() -> None:
     info.add_column()
     info.add_row("[dim]Version[/dim]",  "[white]1.0[/white]  [dim]·  VAPT + EASM Scanner[/dim]")
     info.add_row("[dim]Platform[/dim]", "[white]Kali Linux[/white]  [dim]·  Authorized use only[/dim]")
+    info.add_row("[dim]Storage[/dim]",  "[white]100% Local[/white]  [dim]·  No data leaves your machine[/dim]")
     info.add_row("[dim]AI Triage[/dim]","[white]SLM / Groq / OpenAI / Rule-based[/white]")
     console.print(info)
     console.print()
@@ -149,13 +145,13 @@ def _banner() -> None:
     console.print()
 
 
-# ── Scan config display ───────────────────────────────────────────────────────
+# ── Scan config ───────────────────────────────────────────────────────────────
 
-def _scan_config(target: str, mode: str, log: str) -> None:
+def _scan_config(target: str, mode: str, log: str, save_to: str) -> None:
     console.print()
     console.print(Rule("[dim]Scan Configuration[/dim]", style="dim red"))
     t = Table.grid(padding=(0, 3))
-    t.add_column(style="dim", min_width=20)
+    t.add_column(style="dim", min_width=22)
     t.add_column(style="bold white")
     mode_str = (
         "[bold cyan]Balanced[/bold cyan]"
@@ -164,13 +160,14 @@ def _scan_config(target: str, mode: str, log: str) -> None:
     )
     t.add_row("  [bold blue][[*]][/bold blue]  Target",  target)
     t.add_row("  [bold blue][[*]][/bold blue]  Mode",    mode_str)
+    t.add_row("  [bold blue][[*]][/bold blue]  Save to", save_to)
     t.add_row("  [bold blue][[*]][/bold blue]  Log",     log)
     t.add_row("  [bold blue][[*]][/bold blue]  Started", datetime.now().strftime("%H:%M:%S"))
     console.print(t)
     console.print()
 
 
-# ── Summary table ─────────────────────────────────────────────────────────────
+# ── Summary ───────────────────────────────────────────────────────────────────
 
 def _summary(triage_rows, host_id_map, excel_path, log_path) -> None:
     console.print()
@@ -223,18 +220,16 @@ def _summary(triage_rows, host_id_map, excel_path, log_path) -> None:
 def _menu(excel_path: str, log_path: str) -> None:
     console.print(Rule("[dim]Actions[/dim]", style="dim"))
     console.print()
-
-    CHOICES = [
-        f"Open Excel Report  ({excel_path})",
-        f"Open Scan Log      ({log_path})",
-        "Exit",
-    ]
-
     while True:
         choice = questionary.select(
-            "  Select action:", choices=CHOICES, style=Q,
+            "  Select action:",
+            choices=[
+                f"Open Excel Report  ({excel_path})",
+                f"Open Scan Log      ({log_path})",
+                "Exit",
+            ],
+            style=Q,
         ).ask()
-
         if not choice or "Exit" in choice:
             console.print()
             _ok("Session complete.")
@@ -286,11 +281,10 @@ def main() -> None:
 
     if mode == MODE_AGGRESSIVE:
         console.print()
-        ok = questionary.confirm(
-            "  Aggressive mode scans all 65,535 ports. Confirm authorization?",
+        if not questionary.confirm(
+            "  Aggressive scans all 65,535 ports. Confirm authorization?",
             default=False, style=Q,
-        ).ask()
-        if not ok:
+        ).ask():
             _w("Switching to balanced mode.")
             mode = MODE_BALANCED
     console.print()
@@ -300,6 +294,26 @@ def main() -> None:
         "  tm> ? enumerate subdomains?",
         default=False, style=Q,
     ).ask()
+    console.print()
+
+    # ── Output folder ─────────────────────────────────────────────────────
+    default_save = str(Path.home() / "ThreatMap-Reports")
+    save_dir_raw = questionary.text(
+        "  tm> ? save report to folder:",
+        default=default_save,
+        instruction="(press Enter for default)",
+        style=Q,
+    ).ask()
+    save_dir = (save_dir_raw or default_save).strip()
+
+    # Validate / create the folder
+    try:
+        Path(save_dir).mkdir(parents=True, exist_ok=True)
+        _ok(f"Reports will be saved to: [cyan]{save_dir}[/cyan]")
+    except Exception as exc:
+        _w(f"Cannot create {save_dir}: {exc} — using default.")
+        save_dir = default_save
+        Path(save_dir).mkdir(parents=True, exist_ok=True)
     console.print()
 
     # ── Setup ─────────────────────────────────────────────────────────────
@@ -314,7 +328,7 @@ def main() -> None:
     live_hosts  : list[str]      = []
     host_id_map : dict[str, int] = {}
 
-    _scan_config(target.domain, mode, log_path)
+    _scan_config(target.domain, mode, log_path, save_dir)
 
     # ── Progress ──────────────────────────────────────────────────────────
     with Progress(
@@ -376,7 +390,7 @@ def main() -> None:
             parser.parse_host_reports(host)
             progress.advance(task_db)
 
-        # Phase 3 — Evidence (HTTP probe only — no browser/screenshots)
+        # Phase 3 — Evidence (HTTP probe only)
         http_hosts = [h for h in host_id_map if h.startswith("http")]
         task_ev = progress.add_task("Evidence Collection", total=max(len(http_hosts), 1))
         if http_hosts:
@@ -388,7 +402,7 @@ def main() -> None:
             )
         progress.update(task_ev, completed=max(len(http_hosts), 1))
 
-        # Phase 4 — AI Triage (stderr suppressed)
+        # Phase 4 — AI Triage
         task_ai = progress.add_task("AI Triage", total=1)
         import io, contextlib
         with contextlib.redirect_stderr(io.StringIO()):
@@ -399,13 +413,13 @@ def main() -> None:
         task_rep = progress.add_task("Generating Report", total=1)
         parser.save_and_cleanup()
         db.complete_scan(scan_id)
-        excel_path = generate_excel(db)
+        db.generate_evidence_report(scan_id, "reports/evidence_summary.html")
+        excel_path = generate_excel(db, output_dir=save_dir)
         if not excel_path:
-            _w("No findings to report — check scan.log for details.")
+            _w("No findings — check scan.log for details.")
             return
         progress.advance(task_rep)
 
-    # ── Final summary and menu ─────────────────────────────────────────────
     triage_rows = db.get_all_triage()
     _summary(triage_rows, host_id_map, excel_path, log_path)
     _menu(excel_path, log_path)
