@@ -18,6 +18,20 @@ from typing import Optional
 from scan_logger import get_logger
 
 log = get_logger("runner")
+def _friendly_failure(name: str) -> str:
+    tool = name.split(":")[0].lower()
+    if tool == "gobuster":
+        return "Directory scan could not complete (likely timeout or blocked by target)"
+    if tool == "nmap":
+        return "Port scan could not complete (target may be rate-limiting or unreachable)"
+    if tool == "nuclei":
+        return "Vulnerability template scan could not complete (target may be blocking requests)"
+    if tool in {"whatweb", "nikto", "wafw00f", "sslscan", "curl"}:
+        return "Web analysis step could not complete (target may be blocking or unstable)"
+    if tool in {"subfinder", "assetfinder", "httpx", "whois", "dig"}:
+        return "Discovery step could not complete (network/tool availability issue)"
+    return "Scan step could not complete"
+
 
 
 class ToolStatus(Enum):
@@ -106,7 +120,7 @@ def run_tool(
         except subprocess.TimeoutExpired:
             _kill_process_tree(proc, name)
             elapsed = time.perf_counter() - t0
-            log.warning("[%s] did not finish in %ds; process stopped to keep scan responsive", name, timeout)
+            log.warning("[%s] %s", name, _friendly_failure(name))
             return ToolResult(
                 tool=name,
                 status=ToolStatus.TIMEOUT,
@@ -124,7 +138,7 @@ def run_tool(
                               elapsed=elapsed, stdout=stdout, stderr=stderr,
                               exit_code=proc.returncode)
         else:
-            log.warning("[%s] command failed with exit code %d (%.1fs)", name, proc.returncode, elapsed)
+            log.warning("[%s] %s", name, _friendly_failure(name))
             return ToolResult(tool=name, status=ToolStatus.FAILED,
                               elapsed=elapsed, stdout=stdout, stderr=stderr,
                               exit_code=proc.returncode,
@@ -132,13 +146,13 @@ def run_tool(
 
     except FileNotFoundError:
         elapsed = time.perf_counter() - t0
-        log.warning("[%s] tool is not installed or not in PATH: %s", name, cmd[0])
+        log.warning("[%s] Required tool is unavailable on this system", name)
         return ToolResult(tool=name, status=ToolStatus.SKIPPED,
                           elapsed=elapsed,
                           error=f"Binary not found: {cmd[0]}")
     except PermissionError as exc:
         elapsed = time.perf_counter() - t0
-        log.warning("[%s] could not run due to permission issue: %s", name, exc)
+        log.warning("[%s] Scan step could not run due to system permissions", name)
         return ToolResult(tool=name, status=ToolStatus.FAILED,
                           elapsed=elapsed, error=str(exc))
     except Exception as exc:

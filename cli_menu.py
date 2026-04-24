@@ -106,23 +106,43 @@ def export_excel(json_path: str, output_dir: str) -> Optional[str]:
     out_dir.mkdir(parents=True, exist_ok=True)
     report_data = json.loads(Path(json_path).read_text(encoding="utf-8"))
     findings = report_data.get("findings", [])
+    summary = report_data.get("summary", {})
+    total_findings = int(report_data.get("total", len(findings)))
+    total_hosts = len({f"{f.get('host', '')}" for f in findings if f.get("host")})
 
     workbook = openpyxl.Workbook()
-    ws = workbook.active
-    ws.title = "Vulnerabilities"
-    ws.append(["Host", "Severity", "Description", "Remediation", "Confidence"])
+    ws_summary = workbook.active
+    ws_summary.title = "Summary"
+    ws_summary.append(["Metric", "Value"])
+    ws_summary.append(["Total Hosts", total_hosts])
+    ws_summary.append(["Total Findings", total_findings])
+    ws_summary.append(["Critical", int(summary.get("Critical", 0))])
+    ws_summary.append(["High", int(summary.get("High", 0))])
+    ws_summary.append(["Medium", int(summary.get("Medium", 0))])
+    ws_summary.append(["Low", int(summary.get("Low", 0))])
+    ws_summary.append(["Info", int(summary.get("Info", 0))])
+    ws_summary.freeze_panes = "A2"
 
+    ws = workbook.create_sheet("Vulnerabilities")
+    ws.append(["Host", "Port", "Severity", "Description", "Remediation", "Confidence"])
     for finding in findings:
         ws.append([
-            f"{finding.get('host', '')}:{finding.get('port', '')}",
+            finding.get("host", ""),
+            finding.get("port", ""),
             finding.get("severity", ""),
             finding.get("observation", "") or finding.get("detail", ""),
             finding.get("remediation", ""),
             finding.get("confidence", "Medium"),
         ])
 
-    for col in ("A", "B", "C", "D", "E"):
-        ws.column_dimensions[col].width = 28 if col in ("C", "D") else 22
+    for sheet in (ws_summary, ws):
+        for c in sheet[1]:
+            c.font = openpyxl.styles.Font(bold=True)
+        sheet.freeze_panes = "A2"
+        for col_cells in sheet.columns:
+            col_letter = col_cells[0].column_letter
+            width = max(len(str(cell.value or "")) for cell in col_cells)
+            sheet.column_dimensions[col_letter].width = min(max(width + 2, 12), 48)
 
     xlsx_path = out_dir / f"{Path(json_path).stem}.xlsx"
     workbook.save(xlsx_path)
@@ -143,10 +163,18 @@ def show_logs(log_path: str, tail_lines: int = 30) -> None:
 
     try:
         lines = Path(log_path).read_text(encoding="utf-8", errors="replace").splitlines()
-        tail  = lines[-tail_lines:] if len(lines) > tail_lines else lines
+        clean = []
+        for line in lines:
+            if " DEBUG " in line:
+                continue
+            lowered = line.lower()
+            if any(x in lowered for x in [" cmd:", "exit code", "traceback", "threatmap.triage  [slm]", "provider:"]):
+                continue
+            clean.append(line)
+        tail  = clean[-tail_lines:] if len(clean) > tail_lines else clean
 
-        if len(lines) > tail_lines:
-            _i(f"Showing last {tail_lines} of {len(lines)} lines")
+        if len(clean) > tail_lines:
+            _i(f"Showing last {tail_lines} of {len(clean)} log lines")
         console.print()
         console.print(Rule(style="dim"))
         for line in tail:

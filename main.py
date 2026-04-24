@@ -114,10 +114,9 @@ def _show_summary(triage_rows: list, host_id_map: dict) -> bool:
                       f"  {SEV_SLA.get(sev,'')}")
     t.add_section()
     t.add_row("  [dim]Hosts[/dim]", f"  [white]{len(host_id_map)}[/white]", "")
-    ai_n = sum(1 for r in triage_rows if r["ai_enhanced"])
     t.add_row("  [dim]Findings[/dim]",
               f"  [white]{len(triage_rows)}[/white]",
-              f"  [dim]{ai_n} AI-enhanced[/dim]")
+              "")
     console.print(t)
     console.print()
     return True
@@ -280,11 +279,6 @@ def main() -> None:
         console.print()
         return
 
-    ai_n = sum(1 for r in triage_rows if r["ai_enhanced"])
-    if ai_n > 0:
-        _ok("AI analysis completed")
-    else:
-        _w("AI-enhanced analysis unavailable — using standard analysis")
     console.print()
 
     # 9. Interactive menu — loops until Exit

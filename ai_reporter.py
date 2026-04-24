@@ -7,57 +7,26 @@ STRICT RULES (enforced in prompts and post-processing):
   - If uncertain → "Needs manual verification"
   - All severity comes from CVSS scores, not AI opinion
 
-Resource-aware:
-  - Checks available RAM before loading SLM
-  - Falls back to template-based report if RAM < threshold
-  - Falls back to template if no LLM configured
+Analysis mode:
+  - Uses local model when available
+  - Falls back to standard templated explanations
 
 Outputs:
   - report.json  — structured data
   - report.txt   — plain text, human readable
-  - report.html  — AI-enhanced, browser-safe
+  - report.html  — browser-safe output
 """
 
 import json
 import os
-import platform
-import shutil
-import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from scan_logger import get_logger
 from severity import SEVERITY_ORDER
 
 log = get_logger("reporter")
-
-# ── RAM check ─────────────────────────────────────────────────────────────────
-
-def _available_ram_gb() -> float:
-    """Return available RAM in GB. Returns 99 if check fails."""
-    try:
-        if platform.system() == "Linux":
-            with open("/proc/meminfo") as f:
-                for line in f:
-                    if line.startswith("MemAvailable"):
-                        kb = int(line.split()[1])
-                        return kb / 1_048_576
-        # macOS fallback
-        import subprocess
-        r = subprocess.run(["vm_stat"], capture_output=True, text=True)
-        for line in r.stdout.splitlines():
-            if "Pages free" in line:
-                pages = int(line.split(":")[1].strip().rstrip("."))
-                return (pages * 4096) / 1_073_741_824
-    except Exception:
-        pass
-    return 99.0   # assume plenty if we can't check
-
-
-MIN_RAM_FOR_SLM_GB = 3.0   # minimum free RAM to attempt SLM loading
-
 
 # ── Structured finding dataclass ──────────────────────────────────────────────
 
@@ -86,7 +55,6 @@ class ScanReport:
     completed_at:str
     hosts_count: int
     findings:    list[Finding] = field(default_factory=list)
-    ai_provider: str = "standard"
     generated_at:str = field(default_factory=lambda: datetime.now().isoformat())
 
     @property
@@ -103,20 +71,11 @@ class ScanReport:
 
 # ── AI provider detection ─────────────────────────────────────────────────────
 
-def _detect_provider() -> str:
-    """Return which AI provider is configured. 'none' if nothing."""
-    ram = _available_ram_gb()
-    # SLM requires enough RAM
-    if os.getenv("THREATMAP_SLM_DISABLE","") != "1" and ram >= MIN_RAM_FOR_SLM_GB:
-        slm_dir = Path.home() / ".threatmap" / "models"
-        if any(slm_dir.glob("*.gguf")):
-            return "ai-enhanced"
-
-    provider = os.getenv("THREATMAP_LLM_PROVIDER","").lower()
-    key      = os.getenv("THREATMAP_LLM_API_KEY","")
-    if provider in ("groq","openai","gemini") and key:
-        return "ai-enhanced"
-    return "none"
+def _slm_available() -> bool:
+    if os.getenv("THREATMAP_SLM_DISABLE", "") == "1":
+        return False
+    slm_dir = Path.home() / ".threatmap" / "models"
+    return any(slm_dir.glob("*.gguf"))
 
 
 def _confidence_from_cvss(cvss: float) -> str:
@@ -129,7 +88,7 @@ def _confidence_from_cvss(cvss: float) -> str:
 
 # ── AI explanation (per finding) ─────────────────────────────────────────────
 
-def _explain_finding(finding: Finding, provider: str) -> str:
+def _explain_finding(finding: Finding, use_slm: bool) -> str:
     """
     Ask AI to explain one finding in plain language.
     Returns plain text explanation or "" on failure.
@@ -159,57 +118,11 @@ def _explain_finding(finding: Finding, provider: str) -> str:
     )
 
     try:
-        if provider == "slm":
+        if use_slm:
             return _call_slm(prompt)
-        if provider == "groq":
-            return _call_groq(prompt)
-        if provider == "openai":
-            return _call_openai(prompt)
-        if provider == "gemini":
-            return _call_gemini(prompt)
     except Exception as exc:
-        log.warning("[reporter] AI explanation failed: %s", exc)
+        log.debug("[reporter] SLM explanation failed: %s", exc)
     return ""
-
-
-def _call_groq(prompt: str) -> str:
-    import requests
-    r = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={"Authorization": "Bearer " + os.getenv("THREATMAP_LLM_API_KEY","")},
-        json={
-            "model":    os.getenv("THREATMAP_LLM_MODEL","llama3-70b-8192"),
-            "messages": [{"role":"user","content":prompt}],
-            "temperature": 0.2, "max_tokens": 200,
-        },
-        timeout=20,
-    )
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"].strip()
-
-
-def _call_openai(prompt: str) -> str:
-    from openai import OpenAI
-    c = OpenAI(api_key=os.getenv("THREATMAP_LLM_API_KEY"))
-    r = c.chat.completions.create(
-        model    = os.getenv("THREATMAP_LLM_MODEL","gpt-4o-mini"),
-        messages = [{"role":"user","content":prompt}],
-        temperature=0.2, max_tokens=200,
-    )
-    return r.choices[0].message.content.strip()
-
-
-def _call_gemini(prompt: str) -> str:
-    import requests
-    key   = os.getenv("THREATMAP_LLM_API_KEY","")
-    model = os.getenv("THREATMAP_LLM_MODEL","gemini-1.5-flash")
-    r = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
-        json={"contents":[{"parts":[{"text":prompt}]}]},
-        timeout=20,
-    )
-    r.raise_for_status()
-    return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
 
 
 def _call_slm(prompt: str) -> str:
@@ -294,8 +207,7 @@ class AIReporter:
     """
 
     def __init__(self) -> None:
-        self.provider = _detect_provider()
-        log.info("[reporter] AI analysis mode initialized")
+        self.use_slm = _slm_available()
 
     def build(self, db, scan_id: int) -> ScanReport:
         """Pull triage rows from DB, build structured ScanReport."""
@@ -347,7 +259,6 @@ class AIReporter:
             completed_at = meta["completed_at"],
             hosts_count  = len(meta["hosts"]),
             findings     = findings,
-            ai_provider  = "ai-enhanced" if self.provider != "none" else "standard",
         )
 
         # Enrich findings with AI or template explanations
@@ -358,18 +269,16 @@ class AIReporter:
 
     def _enrich(self, report: ScanReport) -> None:
         """Add plain-language explanation to each finding."""
-        use_ai = self.provider != "none"
-
         for finding in report.findings:
-            if use_ai:
+            if self.use_slm:
                 try:
-                    explanation = _explain_finding(finding, self.provider)
+                    explanation = _explain_finding(finding, self.use_slm)
                     if explanation:
                         finding.ai_summary  = explanation
                         finding.ai_enhanced = True
                         continue
                 except Exception as exc:
-                    log.warning("[reporter] AI failed for %s:%s — using template: %s",
+                    log.debug("[reporter] SLM failed for %s:%s — using template: %s",
                                 finding.host, finding.port, exc)
 
             # Template fallback (always works)
@@ -388,7 +297,6 @@ class AIReporter:
                 "completed_at": report.completed_at,
                 "hosts_count":  report.hosts_count,
                 "generated_at": report.generated_at,
-                "ai_provider":  report.ai_provider,
             },
             "summary": report.counts,
             "total":   report.total,
@@ -427,7 +335,6 @@ class AIReporter:
             f"  Scan Mode    : {report.scan_mode.title()}",
             f"  Date         : {report.generated_at[:10]}",
             f"  Hosts Scanned: {report.hosts_count}",
-            f"  Analysis     : {'AI-enhanced' if report.ai_provider == 'ai-enhanced' else 'Standard'}",
             "",
             "  RISK SUMMARY",
             "  " + "-" * 40,
@@ -464,7 +371,7 @@ class AIReporter:
                 lines += [
                     "",
                     f"     Explanation: {f.ai_summary}",
-                    f"     [{'AI-enhanced' if f.ai_enhanced else 'template'}]",
+                    "     [analysis]",
                 ]
             lines.append("")
 
@@ -535,11 +442,10 @@ class AIReporter:
         rows_html = ""
         for i, f in enumerate(sorted_findings, 1):
             rbg = row_bg.get(f.severity,"#fff") if f.severity in ("Critical","High") else ("#f8f9fa" if i%2==0 else "#fff")
-            ai_tag = ('<span style="color:#999;font-size:10px;margin-left:4px" '
-                      'title="AI-enhanced explanation">✦</span>') if f.ai_enhanced else ""
+            ai_tag = ""
             explanation_row = ""
             if f.ai_summary:
-                src = "AI-enhanced" if f.ai_enhanced else "standard"
+                src = "analysis"
                 explanation_row = (
                     f'<tr style="background:{rbg}">'
                     f'<td></td>'
@@ -564,12 +470,7 @@ class AIReporter:
                 + explanation_row
             )
 
-        ai_note = (
-            "AI-enhanced analysis was applied to explain findings in simpler terms. "
-            "All findings are based strictly on scan tool output."
-            if report.ai_provider == "ai-enhanced"
-            else "AI-enhanced analysis was unavailable; standard analysis templates were used."
-        )
+        ai_note = "Findings are based strictly on scan tool output."
 
         html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
@@ -608,7 +509,6 @@ tr{{page-break-inside:avoid}}}}
     <span class="ml">Report Date</span>  <span class="mv">{report.generated_at[:10]}</span>
     <span class="ml">Scan Mode</span>    <span class="mv">{report.scan_mode.title()}</span>
     <span class="ml">Hosts Scanned</span><span class="mv">{report.hosts_count}</span>
-    <span class="ml">Analysis</span>  <span class="mv">{'AI-enhanced' if report.ai_provider == 'ai-enhanced' else 'Standard'}</span>
     <span class="ml">Classification</span><span class="mv">CONFIDENTIAL — Authorised Recipients Only</span>
   </div>
   <div class="sev-row">{sev_boxes}</div>
@@ -621,7 +521,7 @@ tr{{page-break-inside:avoid}}}}
 <h2>Findings ({report.total})</h2>
 <p style="font-size:12px;color:#777;margin-bottom:14px">
   {' · '.join(f'{counts[s]} {s}' for s in SEV_ORDER if counts.get(s,0)>0)}
-  &nbsp;|&nbsp; ✦ = AI-enhanced explanation
+  &nbsp;|&nbsp; Sorted by severity
 </p>
 <table>
 <thead><tr>
@@ -639,7 +539,7 @@ tr{{page-break-inside:avoid}}}}
 <div class="ai-note">
   ⚠ <strong>Important:</strong> {ai_note}
   All severity ratings are based on CVSS scores from scan data — not AI opinion.
-  AI explanations are to aid understanding, not to replace professional security review.
+  Explanations are included for readability and should be validated during remediation planning.
 </div>
 
 <div class="footer">
