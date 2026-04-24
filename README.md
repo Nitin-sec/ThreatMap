@@ -71,6 +71,9 @@ What would you like to do?
 ##  Example Output
 
 <img width="637" height="221" alt="image" src="https://github.com/user-attachments/assets/6d06332d-0e23-408f-a546-cd5fb3489eec" />
+
+---
+
 <img width="728" height="337" alt="image" src="https://github.com/user-attachments/assets/da22677a-5ca1-4131-b24a-8f65f631288e" />
 
 
