@@ -24,8 +24,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from scan_logger import get_logger
-from severity import SEVERITY_ORDER
+from core.scan_logger import get_logger
+from utils.severity import SEVERITY_ORDER
 
 log = get_logger("reporter")
 

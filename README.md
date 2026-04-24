@@ -43,6 +43,8 @@ cd threatmap
 ./threatmap
 ```
 
+> `install.sh` sets up the Python environment, installs requirements, and verifies required scanner tools.
+
 ---
 
 ##  Usage Flow

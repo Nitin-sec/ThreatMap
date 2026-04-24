@@ -15,7 +15,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from scan_logger import get_logger
+from core.scan_logger import get_logger
 
 log = get_logger("runner")
 def _friendly_failure(name: str) -> str:

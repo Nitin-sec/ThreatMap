@@ -31,19 +31,19 @@ from rich.progress import (
 )
 from rich import box
 
-from scan_logger    import configure as configure_logging, get_logger
-from env_check      import ToolRegistry, ScanDirs
-from scanner_core   import (
+from core.scan_logger import configure as configure_logging, get_logger
+from core.env_check import ToolRegistry, ScanDirs
+from core.scanner_core import (
     Target, ScannerKit, ParallelOrchestrator,
     MODE_BALANCED, MODE_AGGRESSIVE,
 )
-from db_manager     import DBManager
-from evidence_collector import EvidenceCollector
-from ai_triage      import run_ai_triage
-from ai_reporter    import generate_all_reports
-from cli_menu       import PostScanMenu
-from authorization_gate import AuthorizationGate
-from severity import SEVERITY_ORDER
+from db.db_manager import DBManager
+from core.evidence_collector import EvidenceCollector
+from ai.ai_triage import run_ai_triage
+from ai.ai_reporter import generate_all_reports
+from cli.cli_menu import PostScanMenu
+from cli.authorization_gate import AuthorizationGate
+from utils.severity import SEVERITY_ORDER
 
 log     = get_logger("main")
 console = Console()

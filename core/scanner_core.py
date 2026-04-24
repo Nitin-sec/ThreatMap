@@ -20,9 +20,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
-from env_check  import ToolRegistry, ScanDirs
-from scan_runner import run_tool, ToolResult, ToolStatus, ExecutionPipeline
-from scan_logger import get_logger
+from core.env_check import ToolRegistry, ScanDirs
+from core.scan_runner import run_tool, ToolResult, ToolStatus, ExecutionPipeline
+from core.scan_logger import get_logger
 
 log = get_logger("scanner")
 

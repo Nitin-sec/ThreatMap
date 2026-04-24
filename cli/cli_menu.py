@@ -24,7 +24,7 @@ import questionary
 from rich.console import Console
 from rich.rule import Rule
 
-from scan_logger import get_logger
+from core.scan_logger import get_logger
 
 log     = get_logger("menu")
 console = Console()
