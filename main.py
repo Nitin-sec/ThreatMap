@@ -185,7 +185,7 @@ def main() -> str:
         console=console, transient=False,
     ) as progress:
 
-        disc = progress.add_task("Discovery: Target expansion", total=3)
+        disc = progress.add_task("Discovery", total=3)
         if full_scan:
             subs = ScannerKit.discover_subdomains(target, dirs)
             progress.advance(disc); progress.advance(disc)
@@ -195,7 +195,7 @@ def main() -> str:
             live_hosts = [target.url]
             progress.update(disc, completed=3)
 
-        task_scan    = progress.add_task("Scanning: Host & port analysis", total=len(live_hosts))
+        task_scan    = progress.add_task("Scanning", total=len(live_hosts))
         orchestrator = ParallelOrchestrator(mode=mode)
         scan_results : dict[str,dict] = {}
         lock = threading.Lock()
@@ -219,12 +219,12 @@ def main() -> str:
             progress.advance(task_db)
 
         http_hosts = [h for h in host_id_map if h.startswith("http")]
-        task_ev = progress.add_task("Web analysis: HTTP evidence collection", total=max(len(http_hosts),1))
+        task_ev = progress.add_task("Web analysis", total=max(len(http_hosts),1))
         if http_hosts:
             EvidenceCollector().probe_hosts(hosts=http_hosts, output_dir=dirs.report_dir)
         progress.update(task_ev, completed=max(len(http_hosts),1))
 
-        task_ai = progress.add_task("Vulnerability analysis: Risk classification", total=1)
+        task_ai = progress.add_task("Vulnerability analysis", total=1)
         with contextlib.redirect_stderr(io.StringIO()):
             run_ai_triage(db=db, scan_id=scan_id, raw_dir=dirs.raw_dir, report_dir=dirs.report_dir)
         progress.advance(task_ai)
@@ -255,7 +255,7 @@ if __name__ == "__main__":
             if action != "continue":
                 break
             console.print()
-        console.print("  [green][[✔]][/green]  Goodbye.")
+        console.print("  [green][[✔]][/green]  Completed.")
     except KeyboardInterrupt:
         console.print()
         console.print("  [yellow][[!]][/yellow]  Interrupted.")
